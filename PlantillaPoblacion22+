@@ -1,0 +1,9 @@
+Fun1 = function(x){substr(x, 1, 3)}
+CodMun <- sapply(huesca$Municipio, FUN = Fun1)
+Fun2 = function(x){substr(x, 1, 6)}
+CodPob <- sapply(huesca$Unidad.Poblacional, FUN = Fun2)
+VIguales <- rep(" =", length(huesca$Población.total))
+VBarra <- rep("|", length(huesca$Población.total))
+#CodEntero <- paste(CodMun, CodPob, sep = "")
+Resultado <- paste(VBarra, CodMun, CodPob, VIguales, huesca$Población.total, sep = "")
+write.table(Resultado, "C:/Users/Mario Mbombo/Downloads/huescaFinal.txt", sep="\f", quote = FALSE, row.names = FALSE) 
