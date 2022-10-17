@@ -1,0 +1,173 @@
+---
+title: "Goles por jugador"
+author: "Mario E."
+date: "17/10/2022"
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Cargar las liberías
+
+Para empezar con la parte de R en este proyecto empezaremos cargando las diferentes liberías que utilizaremos en los próximos pasos. Tuve algún problemilla instalando **RMySQL**, la solución que encontré en Google fue instalar en mi equipo _libmysqlclient-dev_ antes de **RMySQL**.
+
+```{r, message=FALSE}
+library(DBI)
+library(RMySQL)
+library(stringr)
+library(printr)
+```
+
+## Crear la conexión con la BBDD
+
+Nos conectamos a la base de datos. Está alojada en mi propio ordenador y no contiene datos sensibles, así que no he sido demasiado exigente con la contraseña. Guardamos los detalles de la conexión en una variable porque la utilizaremos cada vez que hagamos una consulta.
+
+```{r}
+con <- dbConnect(RMySQL::MySQL(),dbname = 'ribera_plate', 
+                 host = 'localhost', 
+                 port = 3306,
+                 user = 'root',
+                 password = 'password')
+```
+
+Vamos a realizar la primera consulta SQL, con la que querremos obtener el total de goles por cada jugador durante la temporada.
+Dividiremos los orígenes en dos subconsultas, por un lado el sumatorio de goles por jugador y, por otro, los jugadores que han jugado esa temporada que uniremos mediante un _right join_ para que aparezcan todos los jugadores inscritos esa temporada a pesar de no haber disputados partidos durante la misma.
+Prestad atención al uso de comillas simples y dobles y a finalizar la sentencia con punto y coma.
+
+```{r}
+consulta0 <- paste(
+"WITH total AS (
+  SELECT p.temporada, i.dorsal AS dorsal, sum(IFNULL(i.goles,0)) AS goles
+  FROM partidojugador i
+  INNER JOIN partidos p
+  ON p.partido_id = i.partido_id
+  WHERE p.temporada = '2021-22'
+  GROUP BY i.dorsal
+), d AS (
+  SELECT *
+  FROM dorsales
+	WHERE temporada = '2021-22'
+)
+SELECT apodo, IFNULL(goles,0) AS goles
+FROM total
+RIGHT JOIN d
+ON total.temporada = d.temporada
+AND total.dorsal = d.dorsal
+;")
+```
+
+Ejecutamos la consulta y la guardamos en un DataFrame. Revisamos la estructura del DataFrame que hemos creado para conocer de primera mano a que nos enfrentamos. Habrá que tener especial cuidado con la columna **goles** cuyo tipo de dato es _integer64_.
+
+```{r}
+df.goles_0 <- dbGetQuery(con,consulta0)
+str(df.goles_0)
+```
+
+```{r}
+df.goles_0
+```
+
+
+Creamos un gráfico de barras horizontales con los datos del dataframe
+
+```{r}
+barplot(as.numeric(df.goles_0$goles),
+        names.arg=df.goles_0$apodo,
+        horiz = TRUE,
+        las = 2,
+        xaxp=c(0,18,9),
+        main = 'Goles en la temporada 2021-22')
+```
+
+El gráfico obtenido deja bastante que desear. Observamos que los nombres más largos no entran en el gráfico y es difícil saber cuantos goles exactos tiene cada jugador. Además, algo de color dará vida al mismo.
+
+## Final
+
+Queremos obtener una gráfico por cada jornada en la temporada 2021-22, por lo que habrá que hacer un bucle desde la jornada 0 (para que todos los jugadores comiencen sin goles) hasta la última jornada, que es la número 18.
+
+```{r echo=FALSE}
+knitr::opts_chunk$set(connection = "con")
+```
+
+
+```{sql connection="con"}
+SELECT MAX(jornada) AS total_de_jornadas
+FROM partidos
+WHERE temporada = '2021-22';
+```
+
+
+
+```{r}
+for (jornada in c(0:18)){
+  #Dinamizamos la consulta añadiendo un filtro con la jornada.
+  consulta <- paste(
+"WITH total AS (
+	SELECT p.temporada, i.dorsal AS dorsal, sum(IFNULL(i.goles,0)) AS goles
+	FROM partidojugador i
+	INNER JOIN partidos p
+	ON p.partido_id = i.partido_id
+	WHERE p.temporada = '2021-22'
+	AND p.jornada <= ",jornada, "
+	GROUP BY i.dorsal
+), d AS (
+	SELECT *
+	FROM dorsales
+	WHERE temporada = '2021-22'
+)
+SELECT apodo, IFNULL(goles,0) AS goles
+FROM total
+RIGHT JOIN d
+ON total.temporada = d.temporada
+AND total.dorsal = d.dorsal
+ORDER BY apodo DESC
+;")
+  
+  #Guardamos los resultados en un dataframe.
+  df.goles <- dbGetQuery(con,consulta)
+  
+  #Abrimos una imagen donde guardaremos el gráfico.
+  jpeg(paste("~/Escritorio/Proyecto_I/bplot_2/bplot_", str_pad(jornada,2,side="left",pad = 0),".jpg"), 
+       width = 600,
+       height = 460)
+  
+  #Modificamos los márgenes de la imagen contenedora para evitar que se corte el gráfico.
+  par(mar=c(4,8,4,4),oma=c(1,1,1,1))
+  
+  #Creamos el gráfico
+  bp <- barplot(as.numeric(df.goles$goles),
+          names.arg=df.goles$apodo,
+          horiz = TRUE,
+          cex.axis=1,
+          las = 2,
+          xlim = c(0,18),
+          xaxp=c(0,18,9),
+          main = paste('Goles en la jornada ', jornada),
+          col = 1:length(df.goles$apodo)
+  )
+  
+  #Añadimos el número de goles a la derecha de las barras.
+  text(df.goles$goles,bp,labels=as.character(df.goles$goles),pos=4)
+  
+  #Cerramos la imagen contenedora.
+  dev.off()
+  
+} 
+```
+
+Por último, cerramos la conexión de la BBDD.
+
+```{r}
+DBI::dbDisconnect(con)
+```
+
+Y creamos mediante comando una imagen GIF con las imagenes creadas con **ImageMagick** que viene instalado por defecto en Ubuntu.
+
+```{bash eval=FALSE}
+convert -delay 50 -loop 0 ~/Escritorio/Proyecto_I/bplot_2/*.jpg 
+      ~/Escritorio/Proyecto_I/bplot_2/goles2122.gif
+```
+
